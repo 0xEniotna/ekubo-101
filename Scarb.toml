@@ -1,0 +1,26 @@
+[package]
+name = "parc_core"
+version = "0.1.0"
+edition = "2023_11"
+
+# See more keys and their definitions at https://docs.swmansion.com/scarb/docs/reference/manifest.html
+
+[dependencies]
+starknet = ">=2.6.3"
+openzeppelin = { git = "https://github.com/OpenZeppelin/cairo-contracts.git", tag = "v0.10.0" }
+ekubo = { git = "https://github.com/EkuboProtocol/abis" }
+
+[dev-dependencies]
+snforge_std = { git = "https://github.com/foundry-rs/starknet-foundry", tag = "v0.20.1" }
+ 
+
+
+[[target.starknet-contract]]
+sierra = true
+casm = true
+allowed-libfuncs-list.name = "experimental"
+
+[[tool.snforge.fork]]
+name = "Mainnet"
+url = "https://rpc.nethermind.io/mainnet-juno/?apikey=7Un9ZP5V50pSwljS32HT7WXYKX089OyjvSZB0GF3E2o6Uw2A"
+block_id.tag = "Latest"
