@@ -2,11 +2,6 @@ use core::traits::TryInto;
 
 use starknet::{ClassHash, ContractAddress};
 
-// A helper that returns a very small address, ensuring that this token is always token0 in a pair
-pub fn TOKEN0_ADDRESS() -> ContractAddress {
-    0x00000000000000000000000000000000000000000000000000000000000000A.try_into().unwrap()
-}
-
 pub fn ETH_ADDRESS() -> ContractAddress {
     0x049D36570D4e46f48e99674bd3fcc84644DdD6b96F7C741B1562B82f9e004dC7.try_into().unwrap()
 }

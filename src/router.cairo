@@ -15,7 +15,6 @@ pub struct Swap {
     pub token_amount: TokenAmount,
 }
 
-
 #[derive(Serde, Drop, Copy)]
 pub struct AddLiquidity {
     pub pool_key: PoolKey,
@@ -24,24 +23,18 @@ pub struct AddLiquidity {
     pub amount0: u256,
     pub amount1: u256,
     pub referrer: ContractAddress,
+    pub tokenId: u64
 }
 
-// #[derive(Serde, Drop, Copy)]
-// pub struct MintPosition {
-//     pub pool_key: PoolKey,
-//     pub bounds: Bounds,
-//     pub min_liquidity: u64,
-//     pub referrer: ContractAddress,
-// }
-
-#[derive(Copy, Drop, Serde)]
-struct EkuboLP {
-    owner: ContractAddress,
-    quote_address: ContractAddress,
-    pool_key: PoolKey,
-    bounds: Bounds,
+#[derive(Serde, Drop, Copy)]
+pub struct WithdrawLiquidity {
+    pub id: u64,
+    pub pool_key: PoolKey,
+    pub bounds: Bounds,
+    pub liquidity: u128,
+    pub min_token0: u128,
+    pub min_token1: u128,
 }
-
 
 #[starknet::interface]
 pub trait IRouterLite<TContractState> {
@@ -55,8 +48,9 @@ pub trait IRouterLite<TContractState> {
 
     // Does multiple multihop swaps
     fn multi_multihop_swap(ref self: TContractState, swaps: Array<Swap>) -> Array<Array<Delta>>;
-    fn mint_liquidity(ref self: TContractState, pair: AddLiquidity) -> (u64, EkuboLP);
-    fn update_liquidity(ref self: TContractState, pair: AddLiquidity) -> (u64, EkuboLP);
+    fn mint_liquidity(ref self: TContractState, params: AddLiquidity) -> (u64, u128);
+    fn add_liquidity(ref self: TContractState, params: AddLiquidity) -> u128;
+    fn withdraw_liquidity(ref self: TContractState, params: WithdrawLiquidity) -> (u128, u128);
 }
 
 #[starknet::contract]
@@ -76,26 +70,19 @@ pub mod RouterLite {
 
     use starknet::{get_caller_address, get_contract_address, get_tx_info};
 
+    use ekubo101::addresses::{USDC_ADDRESS, ETH_ADDRESS};
+
     use super::{
         ContractAddress, PoolKey, Delta, IRouterLite, RouteNode, TokenAmount, Swap, AddLiquidity,
-        EkuboLP
+        WithdrawLiquidity
     };
-
-    pub fn ETH_ADDRESS() -> ContractAddress {
-        0x049D36570D4e46f48e99674bd3fcc84644DdD6b96F7C741B1562B82f9e004dC7.try_into().unwrap()
-    }
-
-    pub fn USDC_ADDRESS() -> ContractAddress {
-        0x053C91253BC9682c04929cA02ED00b3E423f6710D2ee7e0D5EBB06F3eCF368A8.try_into().unwrap()
-    }
-
 
     #[derive(Serde, Drop)]
     enum CallbackData {
         SwapCallback: Array<Swap>,
         MintPositionCallback: AddLiquidity,
-        AddLiquidityCallback: AddLiquidity,
-        WithdrawLiquidityCallback: AddLiquidity,
+        AddLiquiditiyCallback: AddLiquidity,
+        WithdrawLiquidityCallback: WithdrawLiquidity,
     }
 
     #[abi(embed_v0)]
@@ -117,90 +104,34 @@ pub mod RouterLite {
     impl LockerImpl of ILocker<ContractState> {
         fn locked(ref self: ContractState, id: u32, data: Span<felt252>) -> Span<felt252> {
             let core = self.core.read();
-
-            // let mut answer = consume_callback_data::<Array<Swap>>(core, data);
-            let mut answer = consume_callback_data::<CallbackData>(core, data);
-
-            match answer {
-                CallbackData::SwapCallback(swaps) => { swap_inner(swaps, core) },
+            // Called by the core contract
+            match consume_callback_data::<CallbackData>(core, data) {
+                CallbackData::SwapCallback(params) => {
+                    let mut swaps = params;
+                    swap_inner(swaps, core)
+                },
                 CallbackData::MintPositionCallback(params) => {
                     let position_contract = self.position.read();
                     mint_inner(params, core, position_contract)
                 },
-                CallbackData::AddLiquidityCallback(params) => {
+                CallbackData::AddLiquiditiyCallback(params) => {
                     let position_contract = self.position.read();
-
-                    if (params.amount0 > 0) {
-                        IERC20Dispatcher { contract_address: params.pool_key.token0 }
-                            .transfer(
-                                recipient: position_contract.contract_address,
-                                amount: params.amount0
-                            );
-                    }
-
-                    if (params.amount1 > 0) {
-                        IERC20Dispatcher { contract_address: params.pool_key.token1 }
-                            .transfer(
-                                recipient: position_contract.contract_address,
-                                amount: params.amount1
-                            );
-                    }
-                    let (id, liquidity) = position_contract
-                        .mint_and_deposit_with_referrer(
-                            params.pool_key,
-                            params.bounds,
-                            min_liquidity: 0,
-                            referrer: 'ref'.try_into().unwrap()
-                        );
-
-                    let mut serialized: Array<felt252> = array![];
-
-                    Serde::serialize(@id, ref serialized);
-                    Serde::serialize(@liquidity, ref serialized);
-
-                    serialized.span()
+                    add_inner(params, core, position_contract)
                 },
                 CallbackData::WithdrawLiquidityCallback(params) => {
                     let position_contract = self.position.read();
-
-                    if (params.amount0 > 0) {
-                        IERC20Dispatcher { contract_address: params.pool_key.token0 }
-                            .transfer(
-                                recipient: position_contract.contract_address,
-                                amount: params.amount0
-                            );
-                    }
-
-                    if (params.amount1 > 0) {
-                        IERC20Dispatcher { contract_address: params.pool_key.token1 }
-                            .transfer(
-                                recipient: position_contract.contract_address,
-                                amount: params.amount1
-                            );
-                    }
-                    let (id, liquidity) = position_contract
-                        .mint_and_deposit_with_referrer(
-                            params.pool_key,
-                            params.bounds,
-                            min_liquidity: 0,
-                            referrer: 'ref'.try_into().unwrap()
-                        );
-
-                    let mut serialized: Array<felt252> = array![];
-
-                    Serde::serialize(@id, ref serialized);
-                    Serde::serialize(@liquidity, ref serialized);
-
-                    serialized.span()
-                },
+                    withdraw_inner(params, core, position_contract)
+                }
             }
         }
     }
 
-    fn swap_inner(swaps: Array<Swap>, core: ICoreDispatcher) -> Span<felt252> {
+    fn swap_inner(mut swaps: Array<Swap>, core: ICoreDispatcher) -> Span<felt252> {
+        // instantiate the output variable, it will hold the deltas of all swaps
         let mut outputs: Array<Array<Delta>> = ArrayTrait::new();
-        let mut swaps = swaps;
+        // loop through all swaps
         loop {
+            // all for each swap do
             match swaps.pop_front() {
                 Option::Some(swap) => {
                     let mut route = swap.route;
@@ -209,10 +140,12 @@ pub mod RouterLite {
                     let mut deltas: Array<Delta> = ArrayTrait::new();
                     // we track this to know how much to pay in the case of exact input and how much to pull in the case of exact output
                     let mut first_swap_amount: Option<TokenAmount> = Option::None;
+
                     loop {
                         match route.pop_front() {
                             Option::Some(node) => {
                                 let is_token1 = token_amount.token == node.pool_key.token1;
+                                // Call the core swap function
                                 let delta = core
                                     .swap(
                                         node.pool_key,
@@ -223,6 +156,7 @@ pub mod RouterLite {
                                             skip_ahead: node.skip_ahead,
                                         }
                                     );
+
                                 deltas.append(delta);
 
                                 if first_swap_amount.is_none() {
@@ -258,20 +192,22 @@ pub mod RouterLite {
                             Option::None => { break (); }
                         };
                     };
-
+                    // Recipient is the address that will receive the output of the swap
                     let recipient = get_tx_info().unbox().account_contract_address;
 
                     outputs.append(deltas);
 
                     let first = first_swap_amount.unwrap();
+                    // handle_delta will transfer the tokens to the recipient
                     handle_delta(core, token_amount.token, -token_amount.amount, recipient);
                     handle_delta(core, first.token, first.amount, recipient);
                 },
                 Option::None => { break (); }
             };
         };
-        let mut serialized: Array<felt252> = array![];
 
+        // serialize and return
+        let mut serialized: Array<felt252> = array![];
         Serde::serialize(@outputs, ref serialized);
         serialized.span()
     }
@@ -279,27 +215,82 @@ pub mod RouterLite {
     fn mint_inner(
         params: AddLiquidity, core: ICoreDispatcher, position: IPositionsDispatcher
     ) -> Span<felt252> {
+        let AddLiquidity { pool_key, bounds, min_liquidity, amount0, amount1, referrer, tokenId } =
+            params;
+
+        // Transfer liquidity to the position contract
         if (params.amount0 > 0) {
-            IERC20Dispatcher { contract_address: params.pool_key.token0 }
-                .transfer(recipient: position.contract_address, amount: params.amount0);
+            let res = IERC20Dispatcher { contract_address: pool_key.token0 }
+                .transfer(recipient: position.contract_address, amount: amount0);
+            assert(res == true, 'Transfer failed');
         }
 
         if (params.amount1 > 0) {
-            IERC20Dispatcher { contract_address: params.pool_key.token1 }
-                .transfer(recipient: position.contract_address, amount: params.amount1);
+            let res = IERC20Dispatcher { contract_address: pool_key.token1 }
+                .transfer(recipient: position.contract_address, amount: amount1);
+            assert(res == true, 'Transfer failed');
         }
+
+        // Mint liquidity
         let (id, liquidity) = position
             .mint_and_deposit_with_referrer(
-                params.pool_key,
-                params.bounds,
-                min_liquidity: params.min_liquidity,
-                referrer: params.referrer
+                pool_key, bounds, min_liquidity: min_liquidity, referrer: referrer
             );
 
+        // Return the id and liquidity
         let mut serialized: Array<felt252> = array![];
 
         Serde::serialize(@id, ref serialized);
         Serde::serialize(@liquidity, ref serialized);
+
+        serialized.span()
+    }
+
+    fn add_inner(
+        params: AddLiquidity, core: ICoreDispatcher, position: IPositionsDispatcher
+    ) -> Span<felt252> {
+        let AddLiquidity { pool_key, bounds, min_liquidity, amount0, amount1, referrer, tokenId } =
+            params;
+
+        // Transfer liquidity to the position contract
+        if (params.amount0 > 0) {
+            let res = IERC20Dispatcher { contract_address: pool_key.token0 }
+                .transfer(recipient: position.contract_address, amount: amount0);
+            assert(res == true, 'Transfer failed');
+        }
+
+        if (params.amount1 > 0) {
+            let res = IERC20Dispatcher { contract_address: pool_key.token1 }
+                .transfer(recipient: position.contract_address, amount: amount1);
+            assert(res == true, 'Transfer failed');
+        }
+
+        // Add liquidity to the existing pool with the given id
+        let liquidity = position.deposit(tokenId, pool_key, bounds, min_liquidity: min_liquidity);
+
+        let mut serialized: Array<felt252> = array![];
+
+        Serde::serialize(@liquidity, ref serialized);
+
+        serialized.span()
+    }
+
+    fn withdraw_inner(
+        params: WithdrawLiquidity, core: ICoreDispatcher, position: IPositionsDispatcher
+    ) -> Span<felt252> {
+        // Destructure params
+        let WithdrawLiquidity { id, pool_key, bounds, liquidity, min_token0, min_token1, } = params;
+
+        // Withdraw liquidity from the pool
+        let (amount0, amount1) = position
+            .withdraw_v2(:id, :pool_key, :bounds, :liquidity, :min_token0, :min_token1,);
+
+        // Router should hold the tokens now
+        // The user must call "clear"
+        let mut serialized: Array<felt252> = array![];
+
+        Serde::serialize(@amount0, ref serialized);
+        Serde::serialize(@amount1, ref serialized);
 
         serialized.span()
     }
@@ -322,21 +313,27 @@ pub mod RouterLite {
 
         #[inline(always)]
         fn multi_multihop_swap(ref self: ContractState, swaps: Array<Swap>) -> Array<Array<Delta>> {
-            call_core_with_callback(self.core.read(), @swaps)
+            call_core_with_callback::<
+                CallbackData, Array<Array<Delta>>
+            >(self.core.read(), @CallbackData::SwapCallback(swaps))
         }
 
-        fn mint_liquidity(ref self: ContractState, pair: AddLiquidity) -> (u64, EkuboLP) {
-            let (id, position) = call_core_with_callback::<
-                CallbackData, (u64, EkuboLP)
-            >(self.core.read(), @CallbackData::MintPositionCallback(pair));
-            return (id, position);
+        fn mint_liquidity(ref self: ContractState, params: AddLiquidity) -> (u64, u128) {
+            call_core_with_callback::<
+                CallbackData, (u64, u128)
+            >(self.core.read(), @CallbackData::MintPositionCallback(params))
         }
 
-        fn update_liquidity(ref self: ContractState, pair: AddLiquidity) -> (u64, EkuboLP) {
-            let (id, position) = call_core_with_callback::<
-                CallbackData, (u64, EkuboLP)
-            >(self.core.read(), @CallbackData::AddLiquidityCallback(pair));
-            return (id, position);
+        fn add_liquidity(ref self: ContractState, params: AddLiquidity) -> u128 {
+            call_core_with_callback::<
+                CallbackData, u128
+            >(self.core.read(), @CallbackData::AddLiquiditiyCallback(params))
+        }
+
+        fn withdraw_liquidity(ref self: ContractState, params: WithdrawLiquidity) -> (u128, u128) {
+            call_core_with_callback::<
+                CallbackData, (u128, u128)
+            >(self.core.read(), @CallbackData::WithdrawLiquidityCallback(params))
         }
     }
     fn sort_tokens(

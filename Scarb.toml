@@ -1,5 +1,5 @@
 [package]
-name = "parc_core"
+name = "ekubo101"
 version = "0.1.0"
 edition = "2023_11"
 
@@ -22,5 +22,5 @@ allowed-libfuncs-list.name = "experimental"
 
 [[tool.snforge.fork]]
 name = "Mainnet"
-url = "https://rpc.nethermind.io/mainnet-juno/?apikey=7Un9ZP5V50pSwljS32HT7WXYKX089OyjvSZB0GF3E2o6Uw2A"
+url = "https://rpc.nethermind.io/mainnet-juno/?apikey="
 block_id.tag = "Latest"
