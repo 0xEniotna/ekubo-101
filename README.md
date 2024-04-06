@@ -184,7 +184,10 @@ fn mint_and_deposit_with_referrer(
     ) -> (u64, u128);
 ```
 
-I'm using this one because it is always nice to earn referal points. There are several other functions to mint/deposit.
-The `pool_key` param is the same as before. `bounds` represents the range to which we allocate our liquidity. It uses two `i129`, one for the `lower_bound` and the other for the `upper_bound`.
-The sign of of the bounds depends if the quote token is `token1` or not. If `token1` is the quote, then sign is 0. If `token1` is not the quote, then sign is 1.
+I'm using this one because it is always nice to earn referal points. There are several other functions to mint/deposit.  
+
+The `pool_key` param is the same as before. `bounds` represents the range to which we allocate our liquidity. It uses two `i129`, one for the `lower_bound` and the other for the `upper_bound`.  
+
+The sign of of the bounds depends if the quote token is `token1` or not. If `token1` is the quote, then sign is 0. If `token1` is not the quote, then sign is 1.  
+
 The magnitude of the bounds isn't the price in $ or in ETH but the tick representing that price. To compute those we need the `tick_spacing` (the precision, we talked about this) and the price.
