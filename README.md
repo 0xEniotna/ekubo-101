@@ -4,6 +4,8 @@ Ekubo is an insane AMM deployed on Starknet. It uses a concentrated liquidity me
 It is developped by Moody Salem, an old Uniswap dev who helped to create the Uniswap v3 [whitepaper](https://uniswap.org/whitepaper-v3.pdf).
 More about Ekubo [here](https://docs.ekubo.org/).
 
+## DISCLAIMER, NONE OF THIS IS AUDITED, DON'T USE IN PROD AS IS
+
 # How does Ekubo work
 
 Ekubo uses an "ask permission-callback" system (it is probably not the official way of describing it but this is how I understand it).
@@ -28,7 +30,7 @@ pub fn call_core_with_callback<TInput, TOutput, +Serde<TInput>, +Serde<TOutput>>
 ```
 
 It takes 2 params, the core contract dispatcher and whatever input (could be the swap data, the withdraw data, the add liquidity data...).
-The output can be whatever suits your project the most. In my example, the return output is an array of `Deltas` which is a representation of a trade/change in balance.
+The output can be whatever suits your project the most. In my example, the return output is an array of `Deltas` which is a way to represent a trade/change in balances.
 
 What happens next is the core contract doing a callback towards my own contract expecting to call `locked`.
 My `locked` function looks like this:
@@ -71,7 +73,7 @@ match consume_callback_data::<CallbackData>(core, data) {
 ```
 
 My `locked` function accepts/consumes the callback from the core by calling `consume_callback_data::<CallbackData>(core, data)`. `CallbackData` is a custom enum. It is the input type of my call.
-To clean my code and to avoid having a 1000 lines `locked` function, I implement the logic in other functions. `swap_inner` implements the swap logic. Basically, it loops through all swaps and executes them one by one. The most important line in `swap_inner` is:
+To clean my code and to avoid having a 1000 lines `locked` function, I implemented the logic in subfunctions. `swap_inner` implements the swap logic. Basically, it loops through all swaps and executes them one by one. The most important line in `swap_inner` is:
 
 ```rs
 let delta = core.swap(
@@ -112,7 +114,8 @@ And now, it's becoming a bit more difficult to understand. How the fuck are we s
 - `token0`, `token1` is ok. token1 > token0.
 - `extension` is most often 0. Ekubo enables third parties to implement pool extensions to add new features.
 - `fee`is the pool fee. If it's straighforward to understand what it is, its computation is trickier. The doc says: `Fee is a 0.128 fixed point number, so to compute the fee, we can do floor(0.05% * 2**128)`. For a fixed point arithmetic intro, [this paper](https://inst.eecs.berkeley.edu/~cs61c/sp06/handout/fixedpt.html) gives a good overview.
-  To compute the fee, we will need a little python program (I stole it from @enitrat):
+
+To compute the fee, we will need a little python program (I stole it from @enitrat):
 
 ```python
 # Compute the fee value for a pool
@@ -137,7 +140,8 @@ which gives us this:
 ```
 
 - `tick_spacing`. From the doc: `The tick spacing of 0.1% is represented as an exponent of 1.000001, so it can be computed as log base 1.000001 of 1.001, which is roughly equal to 1000.`. A price range is split in a lot of small units called ticks. The smallest the tick, the more precise the price can be.
-  With a python snippet:
+
+With a python snippet:
 
 ```python
 # Compute tick spacing value
@@ -170,7 +174,7 @@ Note that it is required you transfer the tokens to the router before executing 
 
 ### Mint liquidity position
 
-I'll only take the example of minting a new liquidity position as adding or withdrawing liquidity is quite similar.
+I'll only take the example of minting a new liquidity position as adding or withdrawing liquidity works almost the same way.
 
 The imporant function is:
 
@@ -184,10 +188,40 @@ fn mint_and_deposit_with_referrer(
     ) -> (u64, u128);
 ```
 
-I'm using this one because it is always nice to earn referal points. There are several other functions to mint/deposit.  
+I'm using this one because it is always nice to earn referal points. There are several other functions to mint/deposit.
 
-The `pool_key` param is the same as before. `bounds` represents the range to which we allocate our liquidity. It uses two `i129`, one for the `lower_bound` and the other for the `upper_bound`.  
+The `pool_key` param is the same as before. `bounds` represents the range to which we allocate our liquidity. It uses two `i129`, one for the `lower_bound` and the other for the `upper_bound`.
 
-The sign of of the bounds depends if the quote token is `token1` or not. If `token1` is the quote, then sign is 0. If `token1` is not the quote, then sign is 1.  
+The sign of the bounds depends on the quote token being `token1`. If `token1` is the quote, then sign is 0. If `token1` is not the quote, then sign is 1.
 
 The magnitude of the bounds isn't the price in $ or in ETH but the tick representing that price. To compute those we need the `tick_spacing` (the precision, we talked about this) and the price.
+The mag depends on which token is the quote (i.e on the sign).
+
+We can compute the magnitude with this:
+
+```python
+# Compute the actual starting tick for an initial price, taking into account tick spacing
+tick_spacing = 1000
+initial_price = 1712
+exact_tick = math.log(initial_price,1.000001)
+starting_tick = (exact_tick // tick_spacing)*tick_spacing
+print(starting_tick)
+```
+
+The initial price needs to be formatted in a certain way. We remove the factional part of the amount because we want integers. The shift is based on the difference in decimals between token 1 and token 0. Here, 1712 is the price of ETH denominated in STRK. 1712 STRK buy you 1 ETH. STRK and ETH both have 18 decimals. No shift.
+
+Let's take another example:
+
+```python
+tick_spacing = 1000
+initial_price = 200200000000 # 20.02 ETH, 10 decimals
+exact_tick = math.log(initial_price,1.000001)
+starting_tick = (exact_tick // tick_spacing)*tick_spacing
+print(starting_tick)
+```
+
+Here we are in the context of the ETH/WBTC pool. BTC has 8 decimal ETH has 18. The result is 10, so 10 decimals in `initial_price`, `20.0200000000`. Here it would print `26022000`.
+
+---
+
+Thanks Eni for the help.
