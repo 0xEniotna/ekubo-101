@@ -58,6 +58,8 @@ fn locked(ref self: ContractState, id: u32, data: Span<felt252>) -> Span<felt252
 }
 ```
 
+### Swap
+
 I've implement different scenarios. In the context of a swap, only this part is interesting:
 
 ```rs
@@ -158,4 +160,31 @@ SwapParameters {
 ```
 
 - `amount`, it is of type `i129`. It "represents a signed integer in a 129 bit container, where the sign is 1 bit and the other 128 bits are magnitude".
-- `is_token1`
+- `is_token1`, if the quote is `token1` or `token2`. In a pair ETH/STRK, STRK is the quote.
+- `sqrt_ratio_limit`, The doc explains it pretty well: "The sqrt_ratio is the square root of the current price in terms of token1 / token0". "sqrt_ratio_limit is a limit on how far the price can move as part of the swap. Note this must always be specified, and must be between the maximum and minimum sqrt ratio.". We can think of it as the slippage.
+- `slip_ahead`, from the doc: "skip_ahead is an optimization parameter for large swaps across many uninitialized ticks to reduce the number of swap iterations that must be performed". It will be mostly 0.
+
+Now that we have all the params, we can finally call `fn swap(ref self: ContractState, node: RouteNode, token_amount: TokenAmount) -> Delta`.
+
+Note that it is required you transfer the tokens to the router before executing the swap and, since its the router that will receive the tokens, we need to clear them from the router. I did it by changing the recipient in `handle_delta` but I could've called `IClearDispatcher{ router.contract_address}.clear(token_dispatcher)`.
+
+### Mint liquidity position
+
+I'll only take the example of minting a new liquidity position as adding or withdrawing liquidity is quite similar.
+
+The imporant function is:
+
+```rs
+fn mint_and_deposit_with_referrer(
+        ref self: TStorage,
+        pool_key: PoolKey,
+        bounds: Bounds,
+        min_liquidity: u128,
+        referrer: ContractAddress
+    ) -> (u64, u128);
+```
+
+I'm using this one because it is always nice to earn referal points. There are several other functions to mint/deposit.
+The `pool_key` param is the same as before. `bounds` represents the range to which we allocate our liquidity. It uses two `i129`, one for the `lower_bound` and the other for the `upper_bound`.
+The sign of of the bounds depends if the quote token is `token1` or not. If `token1` is the quote, then sign is 0. If `token1` is not the quote, then sign is 1.
+The magnitude of the bounds isn't the price in $ or in ETH but the tick representing that price. To compute those we need the `tick_spacing` (the precision, we talked about this) and the price.
